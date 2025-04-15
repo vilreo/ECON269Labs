@@ -1,0 +1,290 @@
+---
+title: "Lab 01 Conversion from Matlab"
+author: "Aaron Swoboda"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+This file aims to convert a series of Matlab scripts and data files into a R Markdown file that replicates the Tol (2023) Lab 1 for the economics of climate change. https://github.com/rtol/ClimateEconomics 
+
+The Matlab files this replicates are:
+
+* MLIAM01.m
+* MLIAM.mat
+* init01.m
+* MRHparam.m
+* MRH.m
+* RFparam.m
+* RadForc.m
+* STparam.m
+* ST.m
+
+
+
+## Overview - the MLIAM01.m script
+```{r, eval=FALSE}
+# clear all
+# load MLIAM (Step 1 below)
+# init01 (Step 2 below)
+# 
+# (Loop is Step 3)
+# for t=StartYear+1:EndYear,
+# i = t - StartYear + 1;
+# MRHbox(i,:) = MRH(MRHbox(i-1,:),CO2emit(i-1),MRHlife,MRHshare,CO2convert);
+# CO2conc(i) = sum(MRHbox(i,:));
+# RF(i) = RadForc(CO2conc(i),RF0,CO20);
+# [atmtemp(i) oceantemp(i)] = ST(atmtemp(i-1),oceantemp(i-1),RF(i),STpar);
+# end
+```
+
+## Step 1 - load the MLIAM.mat file
+```{r}
+library(R.matlab)
+MLIAM <- readMat("../TolMatlabFiles/MLIAM.mat")
+ls.str()
+
+# CO2global <- MLIAM$CO2global        # should we use this?
+CO2emit <- MLIAM$CO2emit
+# CO2concobs  <- MLIAM$CO2concobs
+# population  <- MLIAM$population
+# output  <- MLIAM$output
+# atmtempobs  <- MLIAM$atmtempobs
+# oceantempobs  <- MLIAM$oceantempobs
+# CO2emitobs  <- MLIAM$CO2emitobs    # should we use this?
+# outputobs  <- MLIAM$outputobs
+# energy  <- MLIAM$energy
+# NReg  <- MLIAM$NReg
+```
+
+## Step 2 - run the init01.m script
+```{r, eval=FALSE}
+# %initialize
+# 
+# climsens = 4.260547;
+# EndYear = 2300;
+# StartYear = 1750;
+# NYear = EndYear-StartYear+1;
+# year = zeros(NYear,1);
+# year(1) = StartYear;
+# for i=2:NYear
+# year(i) = year(i-1)+1;
+# end
+# 
+# MRHparam; #Step 2a
+# RFparam; # Step 2b
+# STparam; # Step 2c
+```
+
+and now in R
+
+```{r}
+climsens = 4.260547;
+EndYear = 2300;
+StartYear = 1750;
+year = StartYear:EndYear
+NYear = length(year)
+```
+
+### Step 2a - MRHparam
+
+```{r, eval=FALSE}
+# %MRHparam
+# 
+# MRHlife(1) = 0;
+# MRHlife(2) = 1-exp(-1/363);
+# MRHlife(3) = 1-exp(-1/74);
+# MRHlife(4) = 1-exp(-1/17);
+# MRHlife(5) = 1-exp(-1/2);
+# 
+# MRH1750(1) = 275;
+# MRH1750(2) = 0;
+# MRH1750(3) = 0;
+# MRH1750(4) = 0;
+# MRH1750(5) = 0;
+# 
+# MRHshare(1) = 0.13;
+# MRHshare(2) = 0.20;
+# MRHshare(3) = 0.32;
+# MRHshare(4) = 0.25;
+# MRHshare(5) = 0.10;
+# 
+# CO2convert = 1/2.13/1000;
+# 
+# MRHbox = zeros(NYear,5); %five boxes
+# MRHbox(1,:) = MRH1750;
+# CO2conc = zeros(NYear,1);
+# CO20 = sum(MRH1750);
+# CO2conc(1) = CO20;
+```
+in R
+```{r}
+# %MRHparam
+MRHlife <- c(0, 1-exp(-1/363), 1-exp(-1/74), 1-exp(-1/17), 1-exp(-1/2))
+# 
+MRH1750 <- c(275, 0, 0, 0, 0);
+# 
+MRHshare <- c(0.13, 0.20, 0.32, 0.25, 0.10);
+# 
+CO2convert = 1/2.13/1000;
+# 
+MRHbox = matrix(0, NYear, 5); # "five boxes" for each year
+MRHbox[1, ] = MRH1750;
+CO2conc = matrix(0, NYear, 1);
+CO20 = sum(MRH1750);
+CO2conc[1] = CO20;
+```
+
+
+### Step 2b - RFparam
+
+```{r, eval = FALSE}
+# %RFparam
+# 
+# RF0 = 5.35;
+# RF = zeros(NYear,1);
+# RF(1) = RadForc(CO20,RF0,CO20); #Need the RadForc function
+```
+
+First, create the RadForc function
+```{r}
+### RadForc
+RadForc <-function(CO2,RF0,CO20) RF0*log(CO2/CO20);
+```
+
+Then run the RFparam
+```{r}
+# %RFparam
+# 
+RF0 = 5.35;
+RF = matrix(0, NYear, 1);
+RF[1] = RadForc(CO20, RF0, CO20) #Needs the RadForc function
+```
+
+### Step 2c - ST param 
+
+```{r, eval = FALSE}
+
+# %STparam
+# 
+# atmtemp0 = 0;
+# oceantemp0 = 0;
+# 
+# atmtemp = zeros(NYear,1);
+# oceantemp = zeros(NYear,1);
+# 
+# atmtemp(1) = atmtemp0;
+# oceantemp(1) = oceantemp0;
+# 
+# STpar(1) = climsens/RF0/log(2);
+# STpar(2) = 0.0256;
+# STpar(3) = 0.00738;
+# STpar(4) = 0.00568;
+```
+
+```{r}
+# %STparam
+
+atmtemp0 = 0;
+oceantemp0 = 0;
+
+atmtemp = matrix(0, NYear, 1);
+oceantemp = matrix(0, NYear, 1);
+
+atmtemp[(1)] = atmtemp0;
+oceantemp[(1)] = oceantemp0;
+
+STpar <- c(climsens/RF0/log(2), 0.0256, 0.00738, 0.00568)
+```
+
+### Loop is Step 3
+
+But we need some functions - MRH and ST
+
+```{r, eval = FALSE}
+### MRH - Maier-Reimer Hasselmann model
+# function CO2concnew = MRH(CO2concold,CO2emit,CO2life,CO2share,CO2convert)
+# %function CO2concnew = MRH(CO2concold,CO2emit,CO2life,CO2share,CO2convert)
+# %
+# %updates the atmospheric concentration of carbon dioxide using the
+# %Maier-Reimer Hasselmann model
+# 
+# CO2concnew = (1-CO2life).*CO2concold + CO2convert*CO2share*CO2emit;
+```
+
+MRH in R
+```{r}
+### MRH - Maier-Reimer Hasselmann model
+MRH <- function(CO2concold, CO2emit, CO2life, CO2share, CO2convert) {
+  CO2concnew = (1-CO2life)*CO2concold + CO2convert*CO2share*CO2emit
+  CO2concnew
+}
+```
+
+```{r, eval = FALSE}
+### Schneider-Thompson model of Ocean and Atm Temps
+# function [atmtempnew oceantempnew] = ST(atmtempold,oceantempold,radforc,STpar)
+# %function [atmtempnew oceantempnew] = ST(atmtempold,oceantempold,radforc,STpar)
+# %
+# %updates the temperature of the atmosphere and the ocean using the Schneider-Thompson model
+# 
+# atmtempnew   = atmtempold   + STpar(2)*(STpar(1)*radforc-atmtempold) + STpar(3)*(oceantempold-atmtempold);
+# oceantempnew = oceantempold                                          + STpar(4)*(atmtempold-oceantempold);
+```
+
+```{r}
+### Schneider-Thompson model of Ocean and Atm Temps
+# updates the temperature of the atmosphere and the ocean using the Schneider-Thompson model
+ST <- function(atmtempold,oceantempold,radforc,STpar) {
+atmtempnew   = atmtempold   + 
+    STpar[2]*(STpar[1]*radforc-atmtempold) + 
+    STpar[3]*(oceantempold-atmtempold)
+oceantempnew = oceantempold + 
+  STpar[4]*(atmtempold-oceantempold)
+temps <- c(atmtempnew, oceantempnew)
+names(temps) <- c("atm", "ocean")
+temps
+}
+```
+
+### Step 3 - the main loop!
+```{r, eval = FALSE}
+# for t=StartYear+1:EndYear,
+# i = t - StartYear + 1;
+# MRHbox(i,:) = MRH(MRHbox(i-1,:),CO2emit(i-1),MRHlife,MRHshare,CO2convert); # need the MRH function
+# CO2conc(i) = sum(MRHbox(i,:));
+# RF(i) = RadForc(CO2conc(i),RF0,CO20);
+# [atmtemp(i) oceantemp(i)] = ST(atmtemp(i-1),oceantemp(i-1),RF(i),STpar); # need the ST function
+# end
+```
+
+in R
+
+```{r}
+# for t=StartYear+1:EndYear,
+# i = t - StartYear + 1;
+for (i in 2:(EndYear-StartYear+1)) { 
+MRHbox[i, ] = MRH(MRHbox[i-1,], CO2emit[i-1], MRHlife, MRHshare, CO2convert); # need the MRH function
+CO2conc[i] = sum(MRHbox[i, ]);
+RF[i] = RadForc(CO2conc[i], RF0, CO20);
+temps <- ST(atmtemp[i-1], oceantemp[i-1], RF[i], STpar); # need the ST function
+atmtemp[i] <- temps[["atm"]]
+oceantemp[i] <- temps[["ocean"]]  
+}
+```
+
+### End of Matlab Scripts
+
+```{r}
+ls.str()
+```
+
+## How should we display the output? 
+
+### Plot the output data for comparison?
+
+### Are these outouts consistent with the Excel file results?
+
+### Make sure we are using the correct inputs? 
+
+* CO2emit vs. CO2emitobs vs. CO2global
+
