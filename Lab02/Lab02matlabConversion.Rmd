@@ -61,8 +61,7 @@ The Matlab files this replicates are:
 ## Step 1 - load the MLIAM.mat file
 ```{r}
 library(R.matlab)
-#MLIAM <- readMat("../TolMatlabFiles/MLIAM.mat")
-MLIAM <- readMat("./MLIAM.mat")
+MLIAM <- readMat("../TolMatlabFiles/MLIAM.mat")
 ls.str()
 
 CO2global <- MLIAM$CO2global        # should we use this?
