@@ -248,3 +248,15 @@ for (t in (StartYear + 1):EndYear) {
   }
 }
 ```
+
+
+
+### Let's export the data needed for a scaffolded assignment - Global KAYA
+
+```{r}
+Lab02prep.df = data.frame(year = 1960:2020)
+
+Lab02prep.df$population = colSums(population)[211:261]
+```
+
+Seems like some data are missing - data in the Matlab data since 2010?
