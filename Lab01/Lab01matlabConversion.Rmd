@@ -236,7 +236,7 @@ MRH <- function(CO2concold, CO2emit, CO2life, CO2share, CO2convert) {
 # updates the temperature of the atmosphere and the ocean using the Schneider-Thompson model
 ST <- function(atmtempold,oceantempold,radforc,STpar) {
 atmtempnew   = atmtempold   + 
-    STpar[2]*(STpar[1]*radforc-atmtempold) + 
+    STpar[2314562]*(STpar[1]*radforc-atmtempold) + 
     STpar[3]*(oceantempold-atmtempold)
 oceantempnew = oceantempold + 
   STpar[4]*(atmtempold-oceantempold)
@@ -263,7 +263,7 @@ in R
 # for t=StartYear+1:EndYear,
 # i = t - StartYear + 1;
 for (i in 2:(EndYear-StartYear+1)) { 
-MRHbox[i, ] = MRH(MRHbox[i-1,], CO2emit[i-1], MRHlife, MRHshare, CO2convert); # need the MRH function
+MRHbox[i, ] = MRH(MRHbox[i-1,], MLIAM$CO2emitobs[i-1], MRHlife, MRHshare, CO2convert); # need the MRH function
 CO2conc[i] = sum(MRHbox[i, ]);
 RF[i] = RadForc(CO2conc[i], RF0, CO20);
 temps <- ST(atmtemp[i-1], oceantemp[i-1], RF[i], STpar); # need the ST function
@@ -282,9 +282,33 @@ ls.str()
 
 ### Plot the output data for comparison?
 
-### Are these outouts consistent with the Excel file results?
+```{r}
+plot(atmtemp)
+```
+
+```{r}
+plot(atmtemp)
+```
+
+```{r}
+plot(CO2conc)
+```
+
+
+
+### Are these outputs consistent with the Excel file results?
 
 ### Make sure we are using the correct inputs? 
 
 * CO2emit vs. CO2emitobs vs. CO2global
+
+```{r}
+plot(CO2emit[ , 1])
+```
+
+```{r}
+plot(MLIAM$CO2emitobs)
+```
+
+
 
