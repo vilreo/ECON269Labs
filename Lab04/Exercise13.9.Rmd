@@ -1,5 +1,5 @@
 ---
-title: "Emissions Abatement - Exercise 13.6"
+title: "Emissions Abatement with Permits - Exercise 13.9"
 author: "Aaron Swoboda"
 date: "`r Sys.Date()`"
 output:
@@ -14,7 +14,6 @@ library(googlesheets4)
 options(gargle_oauth_email = "aswoboda@carleton.edu")
 ```
 
-This document implements Exercise 13.6 - introducing emissions abatement as a choice variable to the model. We can then calculate the total and marginal costs of abatement. These are useful measures for future work examining the cost effectiveness and benefit/cost analysis of policy.
 
 This document performs Exercise 13.9 from the Integrated Assessment Model chapter of Climate Economics. It runs the underlying climate and economic modeling tasks from sections 13.1 and 13.2. It also adds the new emissions reduction rates, $R_{i, t}$ to the model, calculates the relative and absolute cost of the emissions reductions, and explores the impact on carbon dioxide concentrations and warming. 
 
@@ -438,9 +437,18 @@ Future.BAU <- Kaya.global
 
 
 
-## Abatement
+## Abatement with Permits
 
-Now we add a choice variable, $R_{r, t}$ that represents the proportion of $M^*_{r, t+1}$ that will get abated. (Note the text talks about the reductions in time t as a function of $R_{r, t-1}$).
+Now we add a choice variable for each Region, $G$ which is the amount of emissions reduced by the region in the next time period according to the allocation of emissions permits. We will also create variables for the equilibrium permit price, and now calculate the number of permits bought/sold, as well as the rate of emissions reductions for each region as a function of the permit price. 
+
+Note that in the last lab $R_{r, t}$ was a choice variable, but now it gets calculated as a function of the permit price. 
+
+
+Set our overall reduction Rate,
+
+```{r}
+GlobalR = 0.1
+```
 
 
 ```{r}
@@ -451,12 +459,32 @@ future.df <- long.df %>% filter(Year == 2020) %>%
   mutate(Mstar = Emissions, 
          Madjusted = Mstar,
          Yadjusted = Ystar,
-         R = 0.1,
+         G = GlobalR*Mstar,
+         Pi = 0,
+         R = GlobalR,
+         P = 0,
+         PermitCosts = 0,
          TACosts = 0,
+         NetCosts = 0,
          MACosts = 0)
 ```
 
-Now we can model our future values
+Now we can model our future values, but note that after estimating several of the economic variables, $Y^*$, $M^*$, etc., now we estimate the permit price first, then estimate the various other policy variables like R, etc.
+
+$$\pi_t = \frac{\Sigma _r G_{r, t}}{\Sigma_r \frac{(M^*_{r, t})^2}{2\beta Y^*_{r, t}}} $$
+
+
+```{r}
+
+GSUM <- future.df %>% filter(Year == 2020) %>% ungroup() %>% summarise(sum(G))
+
+Denom <- future.df %>% filter(Year == 2020) %>% mutate(DenomReg = Mstar^2/2/.1/Ystar) %>% 
+  ungroup() %>% summarise(sum(DenomReg))
+
+GSUM/Denom
+
+```
+
 
 ```{r}
 for (year in 2021:2300) {
@@ -511,18 +539,49 @@ for (year in 2021:2300) {
     future.df$EnInt[which(future.df$Year == year)] *
     future.df$EmInt[which(future.df$Year == year)]
   
-  future.df$Madjusted[which(future.df$Year == year)] = 
-    future.df$Mstar[which(future.df$Year == year)] *
-    (1 - future.df$R[which(future.df$Year == year-1)])
+  # Set G at 10% of Mstar
+  future.df$G[which(future.df$Year == year)] = 
+future.df$Mstar[which(future.df$Year == year)]*GlobalR
   
+  # Calculate Pi, Permit Price which depends on G and YStar and Mstar from all regions
+GSUM <- future.df %>% filter(Year == year) %>% ungroup() %>% summarise(sum(G))
+Denom <- future.df %>% filter(Year == year) %>% 
+  mutate(DenomReg = Mstar^2/2/.1/Ystar) %>% ungroup() %>% summarise(sum(DenomReg))
+
+future.df$Pi[which(future.df$Year == year)] = as.numeric(GSUM/Denom)
+
+ # Now we can calculate R
+future.df$R[which(future.df$Year == year)] = 
+  future.df$Pi[which(future.df$Year == year)] *
+  future.df$Mstar[which(future.df$Year == year)] /2/.1/
+  future.df$Ystar[which(future.df$Year == year)]
+
+# Now P, permit purchases
+future.df$P[which(future.df$Year == year)] = future.df$G[which(future.df$Year == year)] -
+  future.df$Pi[which(future.df$Year == year)]*
+  future.df$Mstar[which(future.df$Year == year)]^2/2/.1/
+  future.df$Ystar[which(future.df$Year == year)]
+
+future.df$PermitCosts[which(future.df$Year == year)] = 
+  future.df$P[which(future.df$Year == year)] *
+  future.df$Pi[which(future.df$Year == year)]
+
   future.df$TACosts[which(future.df$Year == year)] = 
     .1*future.df$R[which(future.df$Year == year)]^2*
     future.df$Ystar[which(future.df$Year == year)]
   
-    future.df$MACosts[which(future.df$Year == year)] = 
+  future.df$NetCosts[which(future.df$Year == year)] =  
+    future.df$TACosts[which(future.df$Year == year)] +
+    future.df$PermitCosts[which(future.df$Year == year)]
+  
+  future.df$MACosts[which(future.df$Year == year)] = 
       2*.1*future.df$R[which(future.df$Year == year)] *
       future.df$Ystar[which(future.df$Year == year)] /
       future.df$Mstar[which(future.df$Year == year)] 
+    
+  future.df$Madjusted[which(future.df$Year == year)] = 
+    future.df$Mstar[which(future.df$Year == year)] *
+    (1 - future.df$R[which(future.df$Year == year-1)])
 }
 ```
 
@@ -530,7 +589,7 @@ Example values for year 2021.
 
 ```{r}
 future.df %>% filter(Year==2021) %>%
-  select(Year, R, Region, Ystar, Yadjusted,  Mstar, Madjusted, TACosts, MACosts) %>%
+  select(Region, Ystar, Mstar, G, Pi, R, P, TACosts, NetCosts, MACosts) %>%
   head()
 ```
 
