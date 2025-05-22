@@ -1,5 +1,5 @@
 ---
-title: "Exercise 13.9 - Tradable Emissions Permits"
+title: "Emissions Abatement - Exercise 13.6"
 author: "Aaron Swoboda"
 date: "`r Sys.Date()`"
 output:
@@ -13,6 +13,8 @@ library(tidyverse)
 library(googlesheets4)
 options(gargle_oauth_email = "aswoboda@carleton.edu")
 ```
+
+This document implements Exercise 13.6 - introducing emissions abatement as a choice variable to the model. We can then calculate the total and marginal costs of abatement. These are useful measures for future work examining the cost effectiveness and benefit/cost analysis of policy.
 
 This document performs Exercise 13.9 from the Integrated Assessment Model chapter of Climate Economics. It runs the underlying climate and economic modeling tasks from sections 13.1 and 13.2. It also adds the new emissions reduction rates, $R_{i, t}$ to the model, calculates the relative and absolute cost of the emissions reductions, and explores the impact on carbon dioxide concentrations and warming. 
 
@@ -219,55 +221,39 @@ Middle.df$Region <- "M"
 Poor.df$Region <- "P"
 ```
 
+In order to model future population, we will calculate the population growth rate from 2019 to 2020. 
 
 ```{r}
 long.df <- full_join(Rich.df, Middle.df) %>% full_join(Poor.df) %>%
+  group_by(Region)
+
+PopulationGrowth2020 <- long.df  %>% mutate(g.Pop = Population/lag(Population) - 1) %>% 
+  filter(Year == 2020) %>% select(Region, g.Pop, Year)
+```
+
+Calculate the energy intensity of GDP as the emissions intensity of energy.
+```{r}
+long.df <- long.df %>%
   mutate(EnInt = Energy/GDP,
-         EmInt = Emissions/Energy) %>%
-  group_by(Region) %>%
-  mutate(Pop.lag = lag(Population),
-         EnInt.lag = lag(EnInt),
+         EmInt = Emissions/Energy)
+
+head(long.df)
+```
+
+And calculate the average growth rate of the intensities to use in modeling the future.
+
+```{r}
+KayaIntensities <-long.df %>% 
+  mutate(EnInt.lag = lag(EnInt),
          EmInt.lag = lag(EmInt),
-         EnInt.g = EnInt/EnInt.lag -1,
-         EmInt.g = EmInt/EmInt.lag -1)
-
-PopulationGrowth2020 <- long.df %>% filter(Year == 2020) %>% 
-  mutate(Pop.g = Population/Pop.lag - 1) %>% select(Region, Pop.g)
-
-KayaIntensities <- summarise(long.df, 
-                           AveEnInt.g = mean(EnInt.g, na.rm = TRUE), 
-                           AveEmInt.g = mean(EmInt.g, na.rm = TRUE))
-
-# These values taken from previous calibration exercises
-GDPparameters <- data.frame(Region = c("R", "M", "P"),
-                            A1960 = c(5.5, 0.65, 0.283), 
-                            Agrowth.historic = c(0.0183, 0.0282, 0.0205))
-
+         g.EnInt = EnInt/EnInt.lag -1,
+         g.EmInt = EmInt/EmInt.lag -1) %>% 
+  summarise(Ave.g.EnInt = mean(g.EnInt, na.rm = TRUE), 
+            Ave.g.EmInt = mean(g.EmInt, na.rm = TRUE)) %>%
+  mutate(Year = 2020)
 ```
 
-```{r}
-names(long.df)
-```
-
-
-
-
-```{r}
-for (i in 2:length(Pop.df$Year)) {
-  Pop.df$Popg.R[i] <- Pop.df$Popg.R[i-1]*.95
-  Pop.df$Pop.R[i] <- Pop.df$Pop.R[i-1]*(1 + Pop.df$Popg.R[i])
-  
-  Pop.df$Popg.M[i] <- Pop.df$Popg.M[i-1]*.95
-  Pop.df$Pop.M[i] <- Pop.df$Pop.M[i-1]*(1 + Pop.df$Popg.M[i])
-    
-  Pop.df$Popg.P[i] <- Pop.df$Popg.P[i-1]*.95
-  Pop.df$Pop.P[i] <- Pop.df$Pop.P[i-1]*(1 + Pop.df$Popg.P[i])
-}
-#head(PopulationModel)
-```
-
-
-
+Before we model the future values of population, energy intensity and emissions intensity, we need to create the modeled GDP ($Y^*$) as well as capital values that we'll need for the future.
 
 
 ### GDP
@@ -300,196 +286,137 @@ Kapital <- function(Kold, GDPold, d = depreciation, s = savingsrate) {
 }
 ```
 
-Add some new columns to our data to use for calculations
-Text says that we should calibrate the model with changing A levels and assume a starting value of capital with
+Text says assume a starting value of capital with
 
 $$K_{1960} = (\frac{s*A}{\delta})^{\frac{1}{1-\alpha}}*Population $$
 
+We've already done the calibration of the GDP model and so we know some parameters.
 
 
-For GDP we will use the Cobb-Douglass Production function and the Solow Growth model.
+
+
 
 ```{r}
-Rich.df$A = 5.5 # 
-Rich.df$K = 0
-Rich.df$GDPmodeled = 0
+GDPparameters<- data.frame(Region = c("R", "M", "P"),
+                            A = c(5.5, 0.65, 0.283), # starter values
+                            g.A = c(0.0183, 0.0282, 0.0205), # growth rates
+                            Year = 1960) %>%
+  left_join(long.df %>% select(Year, Population, GDP))
+# These values taken from previous calibration exercises
 
-Rich.df$K[1] = (savingsrate*Rich.df$A[1]/depreciation)^(1/(1-CobbDouglassalpha))*Rich.df$Population[1]
-Rich.df$GDPmodeled[1] = CobbDouglassGDP(Rich.df$A[1], Rich.df$K[1], Rich.df$Population[1])
+```
 
-TFPgrowth <- 0.0183 # this 2% value is suggested by the text
+```{r}
+GDPparameters <- GDPparameters %>% 
+  mutate(K = (savingsrate*A/depreciation)^(1/(1-CobbDouglassalpha))*Population,
+         Ystar = CobbDouglassGDP(A, K, Population)) 
 
-for (i in 2:length(Rich.df$Year)) {
-  Rich.df$A[i] = Rich.df$A[i-1]*(1+TFPgrowth)
-  Rich.df$K[i] = Kapital(Rich.df$K[i-1], Rich.df$GDPmodeled[i-1])
-  Rich.df$GDPmodeled[i] = CobbDouglassGDP(Rich.df$A[i], Rich.df$K[i], Rich.df$Population[i])
+long.df <- long.df %>% left_join(GDPparameters) %>% group_by(Region)
+```
+
+```{r}
+for (year in 1961:2020) {
+  long.df$K[which(long.df$Year == year)] <- Kapital(
+    long.df$K[which(long.df$Year == year-1)],
+    long.df$Ystar[which(long.df$Year == year-1)])
+  
+  long.df$g.A[which(long.df$Year == year)] <- 
+    long.df$g.A[which(long.df$Year == year-1)]
+  
+  long.df$A[which(long.df$Year == year)] <- 
+    long.df$A[which(long.df$Year == year-1)] * 
+    (1 + long.df$g.A[which(long.df$Year == year)])
+  
+  long.df$Ystar[which(long.df$Year == year)] = CobbDouglassGDP(
+    long.df$A[which(long.df$Year == year)], 
+    long.df$K[which(long.df$Year == year)], 
+    long.df$Population[which(long.df$Year == year)])
 }
-#tail(Rich.df)
 ```
 
 
-The text says to model future GDP assuming total factor productivity growth rate is 0.99 times the previous time period growth rate for Total Factor Productivity.
+Now let's grab the values for year 2020, and add the future values of years 2021-2300 to model future values.
 
 ```{r}
-GDPModel = PopulationModel
-GDPModel$GrowthRate = TFPgrowth
-GDPModel$A = Rich.df$A[which(Rich.df$Year == 2020)]
-GDPModel$K = Rich.df$K[which(Rich.df$Year == 2020)]
-GDPModel$GDPmodeled = Rich.df$GDPmodeled[which(Rich.df$Year == 2020)]
+future.df <- long.df %>% filter(Year == 2020) %>% 
+  left_join(PopulationGrowth2020) %>%
+  left_join(KayaIntensities) %>% 
+  full_join(expand.grid(Year = 2020:2300, Region = c("R", "M", "P"))) %>%
+  mutate(Mstar = NA)
+```
 
-for (i in 2:length(GDPModel$Year)) {
-  GDPModel$GrowthRate[i] = GDPModel$GrowthRate[i-1]*.99
-  GDPModel$A[i] = GDPModel$A[i-1]*(1 + GDPModel$GrowthRate[i])
-  GDPModel$K[i] = Kapital(GDPModel$K[i-1], GDPModel$GDPmodeled[i-1])
-  GDPModel$GDPmodeled[i] = CobbDouglassGDP(GDPModel$A[i], GDPModel$K[i], GDPModel$Population[i])
+Now we can model our future values
+
+```{r}
+future.df$Mstar = future.df$Emissions
+
+for (year in 2021:2300) {
+  
+  # Population growth rate and Population
+  future.df$g.Pop[which(future.df$Year == year)] <- 
+    .95*future.df$g.Pop[which(future.df$Year == year-1)]
+  
+  future.df$Population[which(future.df$Year == year)] <- 
+    future.df$Population[which(future.df$Year == year-1)] * 
+    (1 + future.df$g.Pop[which(future.df$Year == year)])
+  
+  # Energy Intensity growth rate and Energy Intensity
+  future.df$Ave.g.EnInt[which(future.df$Year == year)] <- 
+    future.df$Ave.g.EnInt[which(future.df$Year == year-1)]
+  
+  future.df$EnInt[which(future.df$Year == year)] <-
+    future.df$EnInt[which(future.df$Year == year-1)] * 
+    (1 + future.df$Ave.g.EnInt[which(future.df$Year == year)])
+  
+  # Emissions Intensity growth rate and Emissions Intensity
+  future.df$Ave.g.EmInt[which(future.df$Year == year)] <- 
+    future.df$Ave.g.EmInt[which(future.df$Year == year-1)]
+  
+  future.df$EmInt[which(future.df$Year == year)] <-
+    future.df$EmInt[which(future.df$Year == year-1)] * 
+    (1 + future.df$Ave.g.EmInt[which(future.df$Year == year)])  
+  
+  # Economic variables
+  future.df$K[which(future.df$Year == year)] <- Kapital(
+    future.df$K[which(future.df$Year == year-1)], 
+    future.df$Ystar[which(future.df$Year == year-1)])
+  
+  future.df$g.A[which(future.df$Year == year)] <- 
+    .99*future.df$g.A[which(future.df$Year == year-1)]
+  
+  future.df$A[which(future.df$Year == year)] <- 
+    future.df$A[which(future.df$Year == year-1)] * 
+    (1 + future.df$g.A[which(future.df$Year == year)])
+  
+  future.df$Ystar[which(future.df$Year == year)] = CobbDouglassGDP(
+    future.df$A[which(future.df$Year == year)], 
+    future.df$K[which(future.df$Year == year)], 
+    future.df$Population[which(future.df$Year == year)])
+  
+  # Emissions (using adjusted Kaya Identity: GDP * Energy Intensity * Emissions Intensity)
+  future.df$Mstar[which(future.df$Year == year)] = 
+    future.df$Ystar[which(future.df$Year == year)] *
+    future.df$EnInt[which(future.df$Year == year)] *
+    future.df$EmInt[which(future.df$Year == year)]
 }
-
-GDPModel$GDPperCapita = GDPModel$GDPmodeled/GDPModel$Population
-
-#tail(GDPModel)
-```
-
-### Emissions from Kaya Calculation Rich
-
-Now that we have modeled the four elements of the Kaya Identity (Population, GDP per capita, Energy Intensity, and Emissions Intensity), we can use this to model future emissions. 
-
-```{r}
-Kaya.Rich <- PopulationModel[, c("Year", "Population")] %>% 
-  left_join(GDPModel[, c("Year", "GDPperCapita")]) %>%
-  left_join(EnergyIntensityModel[, c("Year", "EnergyIntensity")]) %>%
-  left_join(EmissionsIntensityModel[, c("Year", "EmissionsIntensity")])
-
-#head(Kaya.Rich)
 ```
 
 
+## Bringing Together the Emissions Data across Regions
+
+We have worked to create emissions predictions for three different regions. But we care about the global emissions. 
+
 ```{r}
-Kaya.Rich = Kaya.Rich %>% 
-  mutate(Emissions = Population*GDPperCapita*EnergyIntensity*EmissionsIntensity)
-head(Kaya.Rich)
+future.df %>% group_by(Year) %>% summarise(Emissions = sum(Mstar))
 ```
 
+Calculate CO2 concentrations and temperature for these emissions. 
 ```{r}
-Middle.df$A = .65 # text says use 1 as a starter value
-Middle.df$K = 0
-Middle.df$GDPmodeled = 0
+Kaya.global <- left_join(future.df %>% 
+                           group_by(Year) %>% 
+                           summarise(Emissions = sum(Mstar)), 
+                         HistoricData, by = c("Year" = "year") )
 
-Middle.df$K[1] = (savingsrate*Middle.df$A[1]/depreciation)^(1/(1- CobbDouglassalpha))*Middle.df$Population[1]
-Middle.df$GDPmodeled[1] = CobbDouglassGDP(Middle.df$A[1], Middle.df$K[1], Middle.df$Population[1])
-
-TFPgrowth <- 0.0282 # 2% value is suggested by the text
-
-for (i in 2:length(Middle.df$Year)) {
-  Middle.df$A[i] = Middle.df$A[i-1]*(1+TFPgrowth)
-  Middle.df$K[i] = Kapital(Middle.df$K[i-1], Middle.df$GDPmodeled[i-1])
-  Middle.df$GDPmodeled[i] = CobbDouglassGDP(Middle.df$A[i], Middle.df$K[i], Middle.df$Population[i])
-}
-#Middle.df %>% select(Year, Population, GDP, A, K, GDPmodeled) %>% tail()
-```
-
-
-The text says to model future GDP assuming total factor productivity growth rate is 0.99 times the previous time period growth rate for Total Factor Productivity.
-
-```{r}
-GDPModel = PopulationModel
-GDPModel$GrowthRate = TFPgrowth
-GDPModel$A = Middle.df$A[which(Middle.df$Year == 2020)]
-GDPModel$K = Middle.df$K[which(Middle.df$Year == 2020)]
-GDPModel$GDPmodeled = Middle.df$GDPmodeled[which(Middle.df$Year == 2020)]
-
-for (i in 2:length(GDPModel$Year)) {
-  GDPModel$GrowthRate[i] = GDPModel$GrowthRate[i-1]*.99
-  GDPModel$A[i] = GDPModel$A[i-1]*(1 + GDPModel$GrowthRate[i])
-  GDPModel$K[i] = Kapital(GDPModel$K[i-1], GDPModel$GDPmodeled[i-1])
-  GDPModel$GDPmodeled[i] = CobbDouglassGDP(GDPModel$A[i], GDPModel$K[i], GDPModel$Population[i])
-}
-
-GDPModel$GDPperCapita = GDPModel$GDPmodeled/GDPModel$Population
-
-#tail(GDPModel)
-```
-
-
-```{r}
-Poor.df$A = .283 # text says use 1 as a starter value
-Poor.df$K = 0
-Poor.df$GDPmodeled = 0
-
-Poor.df$K[1] = (savingsrate*Poor.df$A[1]/depreciation)^(1/(1- CobbDouglassalpha))*Poor.df$Population[1]
-Poor.df$GDPmodeled[1] = CobbDouglassGDP(Poor.df$A[1], Poor.df$K[1], Poor.df$Population[1])
-
-TFPgrowth <- 0.0205 # 2% value is suggested by the text
-
-for (i in 2:length(Poor.df$Year)) {
-  Poor.df$A[i] = Poor.df$A[i-1]*(1+TFPgrowth)
-  Poor.df$K[i] = Kapital(Poor.df$K[i-1], Poor.df$GDPmodeled[i-1])
-  Poor.df$GDPmodeled[i] = CobbDouglassGDP(Poor.df$A[i], Poor.df$K[i], Poor.df$Population[i])
-}
-#Poor.df %>% select(Year, Population, GDP, A, K, GDPmodeled) %>% tail()
-```
-
-
-The text says to model future GDP assuming total factor productivity growth rate is 0.99 times the previous time period growth rate for Total Factor Productivity.
-
-```{r}
-GDPModel = PopulationModel
-GDPModel$GrowthRate = TFPgrowth
-GDPModel$A = Poor.df$A[which(Poor.df$Year == 2020)]
-GDPModel$K = Poor.df$K[which(Poor.df$Year == 2020)]
-GDPModel$GDPmodeled = Poor.df$GDPmodeled[which(Poor.df$Year == 2020)]
-
-for (i in 2:length(GDPModel$Year)) {
-  GDPModel$GrowthRate[i] = GDPModel$GrowthRate[i-1]*.99
-  GDPModel$A[i] = GDPModel$A[i-1]*(1 + GDPModel$GrowthRate[i])
-  GDPModel$K[i] = Kapital(GDPModel$K[i-1], GDPModel$GDPmodeled[i-1])
-  GDPModel$GDPmodeled[i] = CobbDouglassGDP(GDPModel$A[i], GDPModel$K[i], GDPModel$Population[i])
-}
-
-GDPModel$GDPperCapita = GDPModel$GDPmodeled/GDPModel$Population
-
-#tail(GDPModel)
-```
-
-### Emissions from Kaya Calculation
-
-Now that we have modeled the four elements of the Kaya Identity (Population, GDP per capita, Energy Intensity, and Emissions Intensity), we can use this to model future emissions. 
-
-```{r}
-Kaya.Poor <- PopulationModel[, c("Year", "Population")] %>% 
-  left_join(GDPModel[, c("Year", "GDPperCapita")]) %>%
-  left_join(EnergyIntensityModel[, c("Year", "EnergyIntensity")]) %>%
-  left_join(EmissionsIntensityModel[, c("Year", "EmissionsIntensity")])
-
-# head(Kaya.Poor)
-```
-
-Now calculate the Kaya Identity with all of the modeled variables and again four separate times with each of the four variables held constant at their 2020 levels.
-
-```{r}
-Kaya.Poor = Kaya.Poor %>% 
-  mutate(Emissions = Population*GDPperCapita*EnergyIntensity*EmissionsIntensity)
-#head(Kaya.Poor)
-```
-
-## Bringing Together the Kaya Emissions Data across Regions
-
-We have worked to create emissions predictions for three different regions across five different scenarios, business as usual, and then population, GDP per capita, energy intensity, and emissions intensity held constant.
-
-What might some interesting graphs be to examine these data?
-
-```{r}
-Kaya.global <- Kaya.Rich
-
-names(Kaya.global)
-Kaya.global$Emissions <-  Kaya.global$Emissions + Kaya.Middle$Emissions + Kaya.Poor$Emissions
-```
-
-
-
-
-Calculate CO2 concentrations and temperature for emissions paths
-```{r}
-Kaya.global <- left_join(Kaya.global, HistoricData, by = c("Year" = "year") )
 
 Box1col <- which(colnames(Kaya.global) == "Box1")
 
@@ -509,43 +436,150 @@ for (i in 2:length(Kaya.global$Year)) {
   Kaya.global$TempAtm[i] <- temp["atm"]
   Kaya.global$TempOcean[i] <- temp["ocean"]
 }
+
+Future.BAU <- Kaya.global
 ```
 
-Let's extract the emissions, CO2 concentrations, and atmospheric temperature for the different scenarios and put them in a separate dataframe for convenience.
+
+
+## Abatement 
+
+Now we add a choice variable for each Region, $R$ which is the proportion of emissions reduced by the region in the next time period. 
+
 
 ```{r}
-Exercise13.5 <- Kaya.global %>% 
-  select(Year, Emissions, CO2conc, TempAtm) %>% 
-  mutate(ConstantVariable = "None")
+future.df <- long.df %>% filter(Year == 2020) %>% 
+  left_join(PopulationGrowth2020) %>%
+  left_join(KayaIntensities) %>% 
+  full_join(expand.grid(Year = 2020:2300, Region = c("R", "M", "P"))) %>%
+  mutate(Mstar = Emissions, 
+         R = 0.1,
+         Madjusted = Mstar,
+         Yadjusted = Ystar,
+         TACosts = 0,
+         MACosts = 0)
 ```
 
-## Abatement and Tradable Permits
-
-Now we add in the potential for emissions abatement as described by the text in section 13.3 and 13.4
+Now we can model our future values
 
 ```{r}
-Abatement.df <- data.frame(Year = 2020:2300,
-                           R.rich = 0.1, R.mid = 0.1, R.poor = 0.1)
+for (year in 2021:2300) {
+  # Population growth rate and Population
+  future.df$g.Pop[which(future.df$Year == year)] <- 
+    .95*future.df$g.Pop[which(future.df$Year == year-1)]
+  
+  future.df$Population[which(future.df$Year == year)] <- 
+    future.df$Population[which(future.df$Year == year-1)] * 
+    (1 + future.df$g.Pop[which(future.df$Year == year)])
+  
+  # Energy Intensity growth rate and Energy Intensity
+  future.df$Ave.g.EnInt[which(future.df$Year == year)] <- 
+    future.df$Ave.g.EnInt[which(future.df$Year == year-1)]
+  
+  future.df$EnInt[which(future.df$Year == year)] <-
+    future.df$EnInt[which(future.df$Year == year-1)] * 
+    (1 + future.df$Ave.g.EnInt[which(future.df$Year == year)])
+  
+  # Emissions Intensity growth rate and Emissions Intensity
+  future.df$Ave.g.EmInt[which(future.df$Year == year)] <- 
+    future.df$Ave.g.EmInt[which(future.df$Year == year-1)]
+  
+  future.df$EmInt[which(future.df$Year == year)] <-
+    future.df$EmInt[which(future.df$Year == year-1)] * 
+    (1 + future.df$Ave.g.EmInt[which(future.df$Year == year)])  
+  
+  # Economic variables
+  future.df$K[which(future.df$Year == year)] <- Kapital(
+    future.df$K[which(future.df$Year == year-1)], 
+    future.df$Yadjusted[which(future.df$Year == year-1)])
+  
+  future.df$g.A[which(future.df$Year == year)] <- 
+    .99*future.df$g.A[which(future.df$Year == year-1)]
+  
+  future.df$A[which(future.df$Year == year)] <- 
+    future.df$A[which(future.df$Year == year-1)] * 
+    (1 + future.df$g.A[which(future.df$Year == year)])
+  
+  future.df$Ystar[which(future.df$Year == year)] <- CobbDouglassGDP(
+    future.df$A[which(future.df$Year == year)], 
+    future.df$K[which(future.df$Year == year)], 
+    future.df$Population[which(future.df$Year == year)])
+  
+  future.df$Yadjusted[which(future.df$Year == year)] <-
+    future.df$Ystar[which(future.df$Year == year)] * 
+    (1 - .1*future.df$R[which(future.df$Year == year-1)]^2)
+  
+  # Emissions (using adjusted Kaya Identity: GDP * Energy Intensity * Emissions Intensity)
+  future.df$Mstar[which(future.df$Year == year)] = 
+    future.df$Ystar[which(future.df$Year == year)] *
+    future.df$EnInt[which(future.df$Year == year)] *
+    future.df$EmInt[which(future.df$Year == year)]
+  
+  future.df$Madjusted[which(future.df$Year == year)] = 
+    future.df$Mstar[which(future.df$Year == year)] *
+    (1 - future.df$R[which(future.df$Year == year-1)])
+  
+  future.df$TACosts[which(future.df$Year == year)] = 
+    .1*future.df$R[which(future.df$Year == year)]^2*
+    future.df$Ystar[which(future.df$Year == year)]
+  
+    future.df$MACosts[which(future.df$Year == year)] = 
+      2*.1*future.df$R[which(future.df$Year == year)] *
+      future.df$Ystar[which(future.df$Year == year)] /
+      future.df$Mstar[which(future.df$Year == year)] 
+}
 ```
 
-Pollution reductions reduce output by equation 13.13.
+Example values for year 2021.
 
 ```{r}
-GDPModel = PopulationModel %>% left_join(Abatement.df)
-GDPModel$GrowthRate = TFPgrowth
-GDPModel$A = Rich.df$A[which(Rich.df$Year == 2020)]
-GDPModel$K = Rich.df$K[which(Rich.df$Year == 2020)]
-GDPModel$GDPmodeled = Rich.df$GDPmodeled[which(Rich.df$Year == 2020)]
+future.df %>% filter(Year==2021) %>%
+  select(Year, R, Region, Ystar, Yadjusted,  Mstar, Madjusted, TACosts, MACosts) %>%
+  head()
+```
 
-for (i in 2:length(GDPModel$Year)) {
-  GDPModel$GrowthRate[i] = GDPModel$GrowthRate[i-1]*.99
-  GDPModel$A[i] = GDPModel$A[i-1]*(1 + GDPModel$GrowthRate[i])
-  GDPModel$K[i] = Kapital(GDPModel$K[i-1], GDPModel$GDPmodeled[i-1])
-  GDPModel$GDPmodeled[i] = CobbDouglassGDP(GDPModel$A[i], GDPModel$K[i], GDPModel$Population[i])
+
+In order to see the impacts on CO2 concentrations and warming, we need to add up the adjusted emissions across the three regions for each year and feed these into our Climate Model.
+
+Calculate CO2 concentrations and temperature for these emissions. 
+```{r}
+Kaya.global <- left_join(future.df %>% 
+                           group_by(Year) %>% 
+                           summarise(Emissions = sum(Madjusted)), 
+                         HistoricData, by = c("Year" = "year") )
+
+
+Box1col <- which(colnames(Kaya.global) == "Box1")
+
+#Implement Five box model for CO2 concentrations
+for (i in 2:length(Kaya.global$Year)) {
+ Kaya.global[i, Box1col:(Box1col+4)] <- CO2difference(Kaya.global[i - 1, Box1col:(Box1col+4)],
+                                                       Kaya.global$Emissions[i - 1])
+ }
+# Calculate total CO2 concentration in atmosphere
+Kaya.global$CO2conc <- Kaya.global$Box1 + Kaya.global$Box2 + Kaya.global$Box3 + 
+  Kaya.global$Box4 + Kaya.global$Box5
+# Calculate radiative forcing
+Kaya.global$RF <- RadForc(Kaya.global$CO2conc)
+# Calculate Temperatures
+for (i in 2:length(Kaya.global$Year)) {  
+    temp <- Temps(Kaya.global$TempAtm[i-1], Kaya.global$TempOcean[i-1], Kaya.global$RF[i])
+  Kaya.global$TempAtm[i] <- temp["atm"]
+  Kaya.global$TempOcean[i] <- temp["ocean"]
 }
 
-GDPModel$GDPperCapita = GDPModel$GDPmodeled/GDPModel$Population
-
-#tail(GDPModel)
+Future.R0.1 <- Kaya.global 
 ```
 
+
+```{r}
+ggplot(data = Future.R0.1, aes(x = Year)) +
+  geom_line(aes(y = Emissions)) +
+  geom_line(data = Future.BAU, aes(x = Year, y = Emissions), linetype = "dashed")
+```
+
+```{r}
+ggplot(data = Future.R0.1, aes(x = Year)) +
+  geom_line(aes(y = TempAtm)) +
+  geom_line(data = Future.BAU, aes(x = Year, y = TempAtm), linetype = "dashed")
+```
